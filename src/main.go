@@ -3,7 +3,6 @@ package main
 import (
 	"database/sql"
 	"fmt"
-	"log"
 	"os"
 	"strings"
 
@@ -12,6 +11,12 @@ import (
 
 const Version = "v1.0.0"
 
+func ckErr(err error) {
+	if err != nil {
+		panic(err)
+	}
+}
+
 func main() {
 	var createSchemas []string
 	var createTables []string
@@ -19,49 +24,39 @@ func main() {
 	var createSequences []string
 	var inserts []string
 	db, err := sql.Open("postgres", os.Args[1])
-	if err != nil {
-		log.Fatal(err)
-	}
+	ckErr(err)
 	defer db.Close()
 
 	var curDB string
 	row := db.QueryRow("SELECT current_database()")
-	if err := row.Scan(&curDB); err != nil {
-		panic(err)
-	}
+	err = row.Scan(&curDB)
+	ckErr(err)
 
 	rows, err := db.Query("SHOW SCHEMAS")
-	if err != nil {
-		panic(err)
-	}
+	ckErr(err)
 	defer rows.Close()
 	for rows.Next() {
 		var schema string
 		var owner sql.NullString
-		if err := rows.Scan(&schema, &owner); err != nil {
-			panic(err)
-		}
+		err = rows.Scan(&schema, &owner)
+		ckErr(err)
 		if owner.Valid && owner.String != "admin" {
 			createSchemas = append(createSchemas, fmt.Sprintf("CREATE SCHEMA %s;", schema))
 		}
 	}
-	if err = rows.Err(); err != nil {
-		panic(err)
-	}
+	err = rows.Err()
+	ckErr(err)
 
 	var tables []string
 	var sequences []string
 
 	rows, err = db.Query("SHOW CREATE ALL TABLES")
-	if err != nil {
-		panic(err)
-	}
+	ckErr(err)
 	defer rows.Close()
 	for rows.Next() {
 		var create string
-		if err := rows.Scan(&create); err != nil {
-			panic(err)
-		}
+		err = rows.Scan(&create)
+		ckErr(err)
 
 		elements := strings.Split(create, " ")
 		if elements[1] == "TABLE" {
@@ -78,15 +73,12 @@ func main() {
 			createViews = append(createViews, strings.ReplaceAll(create, curDB+".", ""))
 		}
 	}
-	if err = rows.Err(); err != nil {
-		panic(err)
-	}
+	err = rows.Err()
+	ckErr(err)
 
 	for _, table := range tables {
 		rows, err = db.Query(fmt.Sprintf("SHOW COLUMNS FROM %s", table))
-		if err != nil {
-			panic(err)
-		}
+		ckErr(err)
 		defer rows.Close()
 		var columns []string
 		for rows.Next() {
@@ -94,22 +86,18 @@ func main() {
 			var nullable, hidden bool
 			var deflt sql.NullString
 			var index interface{}
-			if err := rows.Scan(&colName, &dataType, &nullable, &deflt, &gen, &index, &hidden); err != nil {
-				panic(err)
-			}
+			err = rows.Scan(&colName, &dataType, &nullable, &deflt, &gen, &index, &hidden)
+			ckErr(err)
 			if gen == "" && !hidden {
 				columns = append(columns, colName)
 			}
 		}
 		sel := fmt.Sprintf("SELECT \"%s\" FROM %s", strings.Join(columns, "\", \""), table)
-		if err = rows.Err(); err != nil {
-			panic(err)
-		}
+		err = rows.Err()
+		ckErr(err)
 
 		rows, err = db.Query(sel)
-		if err != nil {
-			panic(err)
-		}
+		ckErr(err)
 		defer rows.Close()
 		for rows.Next() {
 			values := make([]sql.NullString, len(columns))
@@ -119,9 +107,8 @@ func main() {
 				valuePtrs[i] = &values[i]
 			}
 
-			if err := rows.Scan(valuePtrs...); err != nil {
-				panic(err)
-			}
+			err = rows.Scan(valuePtrs...)
+			ckErr(err)
 
 			for idx, value := range values {
 				if value.Valid {
@@ -133,21 +120,18 @@ func main() {
 
 			inserts = append(inserts, fmt.Sprintf("INSERT INTO %s (\"%s\") VALUES (%s);", table, strings.Join(columns, "\", \""), strings.Join(valStr, ", ")))
 		}
-		if err = rows.Err(); err != nil {
-			panic(err)
-		}
+		err = rows.Err()
+		ckErr(err)
 	}
 
 	for _, sequence := range sequences {
 		var curVal int64
 		row := db.QueryRow(fmt.Sprintf("SELECT nextval('%s')", sequence))
-		if err := row.Scan(&curVal); err != nil {
-			panic(err)
-		}
+		err = row.Scan(&curVal)
+		ckErr(err)
 		qry := fmt.Sprintf("SELECT setval('%s', %d, false);", sequence, curVal)
-		if _, err := db.Exec(qry); err != nil {
-			panic(err)
-		}
+		_, err = db.Exec(qry)
+		ckErr(err)
 		inserts = append(inserts, qry)
 	}
 
