@@ -80,7 +80,7 @@ func QRowStruct(db *sql.DB, qry string, dest interface{}) (found bool) {
 	return true
 }
 
-func QRows(db *sql.DB, qry string, params []interface{}, lambda func(row Scannable) (stop bool, err error)) (found int) {
+func QRows(db *sql.DB, qry string, lambda func(row Scannable) (stop bool, err error), params ...interface{}) (found int) {
 	rows, err := db.Query(qry, params...)
 	ckErr(err)
 	defer Close(rows)
@@ -110,7 +110,7 @@ func QRowsAsStrings(db *sql.DB, qry string, params ...interface{}) []string {
 	return ret
 }
 
-func QExec(db *sql.DB, qry string, params []interface{}) {
+func QExec(db *sql.DB, qry string, params ...interface{}) {
 	_, err := db.Exec(qry, params...)
 	ckErr(err)
 }

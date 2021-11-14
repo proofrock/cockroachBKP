@@ -40,7 +40,7 @@ func main() {
 	curDB, _ := QRowString(db, "SELECT current_database()")
 	curUser, _ := QRowString(db, "SELECT current_user")
 
-	QRows(db, "SHOW SCHEMAS", nil, func(row Scannable) (stop bool, err error) {
+	QRows(db, "SHOW SCHEMAS", func(row Scannable) (stop bool, err error) {
 		var schema string
 		var owner sql.NullString
 		if err = row.Scan(&schema, &owner); err != nil {
@@ -55,7 +55,7 @@ func main() {
 	var tables []string
 	var sequences []string
 
-	QRows(db, "SHOW CREATE ALL TABLES", nil, func(row Scannable) (stop bool, err error) {
+	QRows(db, "SHOW CREATE ALL TABLES", func(row Scannable) (stop bool, err error) {
 		var create string
 		if err = row.Scan(&create); err != nil {
 			return true, err
@@ -79,7 +79,7 @@ func main() {
 
 	for _, table := range tables {
 		var columns []string
-		QRows(db, fmt.Sprintf("SHOW COLUMNS FROM %s", table), nil, func(row Scannable) (stop bool, err error) {
+		QRows(db, fmt.Sprintf("SHOW COLUMNS FROM %s", table), func(row Scannable) (stop bool, err error) {
 			var noop interface{}
 			var colName, gen string
 			var hidden bool
@@ -93,7 +93,7 @@ func main() {
 		})
 
 		sel := fmt.Sprintf("SELECT \"%s\" FROM %s", strings.Join(columns, "\", \""), table)
-		QRows(db, sel, nil, func(row Scannable) (stop bool, err error) {
+		QRows(db, sel, func(row Scannable) (stop bool, err error) {
 			values := make([]sql.NullString, len(columns))
 			valuePtrs := make([]interface{}, len(values))
 			valStr := make([]string, len(values))
@@ -123,7 +123,7 @@ func main() {
 		curVal, _ := QRowInt64(db, fmt.Sprintf("SELECT nextval('%s')", sequence))
 
 		qry := fmt.Sprintf("SELECT setval('%s', %d, false);", sequence, curVal)
-		QExec(db, qry, nil)
+		QExec(db, qry)
 		inserts = append(inserts, qry)
 	}
 
