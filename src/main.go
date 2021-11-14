@@ -2,6 +2,7 @@ package main
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -11,18 +12,12 @@ import (
 
 const Version = "v0.1.0"
 
-func ckErr(err error) {
-	if err != nil {
-		panic(err)
+func walkLists(block func(str string), lists ...[]string) {
+	for _, list := range lists {
+		for _, output := range list {
+			fmt.Println(output)
+		}
 	}
-}
-
-type Closable interface {
-	Close() error
-}
-
-func close(thing Closable) {
-	ckErr(thing.Close())
 }
 
 func main() {
@@ -40,44 +35,36 @@ func main() {
 
 	db, err := sql.Open("postgres", os.Args[1])
 	ckErr(err)
-	defer close(db)
+	defer Close(db)
 
 	var curDB string
-	row := db.QueryRow("SELECT current_database()")
-	err = row.Scan(&curDB)
-	ckErr(err)
+	QRow(db, "SELECT current_database()", nil, &curDB)
 
-	rows, err := db.Query("SHOW SCHEMAS")
-	ckErr(err)
-	defer close(rows)
-	for rows.Next() {
+	QRows(db, "SHOW SCHEMAS", nil, func(row Scannable) (stop bool, err error) {
 		var schema string
 		var owner sql.NullString
-		err = rows.Scan(&schema, &owner)
-		ckErr(err)
+		if err = row.Scan(&schema, &owner); err != nil {
+			return true, err
+		}
 		if owner.Valid && owner.String != "admin" {
 			createSchemas = append(createSchemas, fmt.Sprintf("CREATE SCHEMA %s;", schema))
 		}
-	}
-	err = rows.Err()
-	ckErr(err)
+		return
+	})
 
 	var tables []string
 	var sequences []string
 
-	rows, err = db.Query("SHOW CREATE ALL TABLES")
-	ckErr(err)
-	defer close(rows)
-	for rows.Next() {
+	QRows(db, "SHOW CREATE ALL TABLES", nil, func(row Scannable) (stop bool, err error) {
 		var create string
-		err = rows.Scan(&create)
-		ckErr(err)
-
+		if err = row.Scan(&create); err != nil {
+			return true, err
+		}
 		elements := strings.Split(create, " ")
 		if elements[1] == "TABLE" {
-			// if strings.Contains(create, "GENERATED ALWAYS AS IDENTITY") {
-			// 	panic("GENERATED ALWAYS AS IDENTITY is not supported. Aborting.")
-			// }
+			if strings.Contains(create, "GENERATED ALWAYS AS IDENTITY") {
+				return true, errors.New("GENERATED ALWAYS AS IDENTITY is not supported. Aborting.")
+			}
 			tables = append(tables, elements[2])
 			createTables = append(createTables, create)
 		} else if elements[1] == "SEQUENCE" {
@@ -87,34 +74,26 @@ func main() {
 		} else if elements[1] == "VIEW" {
 			createViews = append(createViews, strings.ReplaceAll(create, curDB+".", ""))
 		}
-	}
-	err = rows.Err()
-	ckErr(err)
+		return
+	})
 
 	for _, table := range tables {
-		rows, err = db.Query(fmt.Sprintf("SHOW COLUMNS FROM %s", table))
-		ckErr(err)
-		defer close(rows)
 		var columns []string
-		for rows.Next() {
-			var colName, dataType, gen string
-			var nullable, hidden bool
-			var deflt sql.NullString
-			var index interface{}
-			err = rows.Scan(&colName, &dataType, &nullable, &deflt, &gen, &index, &hidden)
-			ckErr(err)
+		QRows(db, fmt.Sprintf("SHOW COLUMNS FROM %s", table), nil, func(row Scannable) (stop bool, err error) {
+			var noop interface{}
+			var colName, gen string
+			var hidden bool
+			if err = row.Scan(&colName, &noop, &noop, &noop, &gen, &noop, &hidden); err != nil {
+				return true, err
+			}
 			if gen == "" && !hidden {
 				columns = append(columns, colName)
 			}
-		}
-		sel := fmt.Sprintf("SELECT \"%s\" FROM %s", strings.Join(columns, "\", \""), table)
-		err = rows.Err()
-		ckErr(err)
+			return
+		})
 
-		rows, err = db.Query(sel)
-		ckErr(err)
-		defer close(rows)
-		for rows.Next() {
+		sel := fmt.Sprintf("SELECT \"%s\" FROM %s", strings.Join(columns, "\", \""), table)
+		QRows(db, sel, nil, func(row Scannable) (stop bool, err error) {
 			values := make([]sql.NullString, len(columns))
 			valuePtrs := make([]interface{}, len(values))
 			valStr := make([]string, len(values))
@@ -122,8 +101,9 @@ func main() {
 				valuePtrs[i] = &values[i]
 			}
 
-			err = rows.Scan(valuePtrs...)
-			ckErr(err)
+			if err = row.Scan(valuePtrs...); err != nil {
+				return true, err
+			}
 
 			for idx, value := range values {
 				if value.Valid {
@@ -133,26 +113,22 @@ func main() {
 				}
 			}
 
-			inserts = append(inserts, fmt.Sprintf("INSERT INTO %s (\"%s\") VALUES (%s);", table, strings.Join(columns, "\", \""), strings.Join(valStr, ", ")))
-		}
-		err = rows.Err()
-		ckErr(err)
+			sql := fmt.Sprintf("INSERT INTO %s (\"%s\") VALUES (%s);", table, strings.Join(columns, "\", \""), strings.Join(valStr, ", "))
+			inserts = append(inserts, sql)
+			return
+		})
 	}
 
 	for _, sequence := range sequences {
 		var curVal int64
-		row := db.QueryRow(fmt.Sprintf("SELECT nextval('%s')", sequence))
-		err = row.Scan(&curVal)
-		ckErr(err)
+		QRow(db, fmt.Sprintf("SELECT nextval('%s')", sequence), nil, &curVal)
+
 		qry := fmt.Sprintf("SELECT setval('%s', %d, false);", sequence, curVal)
-		_, err = db.Exec(qry)
-		ckErr(err)
+		QExec(db, qry, nil)
 		inserts = append(inserts, qry)
 	}
 
-	for _, list := range [][]string{createSchemas, createTables, createSequences, createViews, inserts} {
-		for _, output := range list {
-			fmt.Println(output)
-		}
-	}
+	walkLists(func(str string) {
+		fmt.Println(str)
+	}, createSchemas, createTables, createSequences, createViews, inserts)
 }
