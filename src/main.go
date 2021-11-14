@@ -9,7 +9,7 @@ import (
 	_ "github.com/lib/pq"
 )
 
-const Version = "v1.0.0"
+const Version = "v0.1.0"
 
 func ckErr(err error) {
 	if err != nil {
@@ -17,15 +17,30 @@ func ckErr(err error) {
 	}
 }
 
+type Closable interface {
+	Close() error
+}
+
+func close(thing Closable) {
+	ckErr(thing.Close())
+}
+
 func main() {
+	defer func() {
+		if r := recover(); r != nil {
+			fmt.Fprintf(os.Stderr, "ERROR: %s\n", r)
+		}
+	}()
+
 	var createSchemas []string
 	var createTables []string
 	var createViews []string
 	var createSequences []string
 	var inserts []string
+
 	db, err := sql.Open("postgres", os.Args[1])
 	ckErr(err)
-	defer db.Close()
+	defer close(db)
 
 	var curDB string
 	row := db.QueryRow("SELECT current_database()")
@@ -34,7 +49,7 @@ func main() {
 
 	rows, err := db.Query("SHOW SCHEMAS")
 	ckErr(err)
-	defer rows.Close()
+	defer close(rows)
 	for rows.Next() {
 		var schema string
 		var owner sql.NullString
@@ -52,7 +67,7 @@ func main() {
 
 	rows, err = db.Query("SHOW CREATE ALL TABLES")
 	ckErr(err)
-	defer rows.Close()
+	defer close(rows)
 	for rows.Next() {
 		var create string
 		err = rows.Scan(&create)
@@ -79,7 +94,7 @@ func main() {
 	for _, table := range tables {
 		rows, err = db.Query(fmt.Sprintf("SHOW COLUMNS FROM %s", table))
 		ckErr(err)
-		defer rows.Close()
+		defer close(rows)
 		var columns []string
 		for rows.Next() {
 			var colName, dataType, gen string
@@ -98,7 +113,7 @@ func main() {
 
 		rows, err = db.Query(sel)
 		ckErr(err)
-		defer rows.Close()
+		defer close(rows)
 		for rows.Next() {
 			values := make([]sql.NullString, len(columns))
 			valuePtrs := make([]interface{}, len(values))
