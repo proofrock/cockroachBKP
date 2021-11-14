@@ -37,8 +37,8 @@ func main() {
 	ckErr(err)
 	defer Close(db)
 
-	var curDB string
-	QRow(db, "SELECT current_database()", nil, &curDB)
+	curDB, _ := QRowString(db, "SELECT current_database()")
+	curUser, _ := QRowString(db, "SELECT current_user")
 
 	QRows(db, "SHOW SCHEMAS", nil, func(row Scannable) (stop bool, err error) {
 		var schema string
@@ -46,7 +46,7 @@ func main() {
 		if err = row.Scan(&schema, &owner); err != nil {
 			return true, err
 		}
-		if owner.Valid && owner.String != "admin" {
+		if owner.Valid && owner.String == curUser {
 			createSchemas = append(createSchemas, fmt.Sprintf("CREATE SCHEMA %s;", schema))
 		}
 		return
@@ -120,8 +120,7 @@ func main() {
 	}
 
 	for _, sequence := range sequences {
-		var curVal int64
-		QRow(db, fmt.Sprintf("SELECT nextval('%s')", sequence), nil, &curVal)
+		curVal, _ := QRowInt64(db, fmt.Sprintf("SELECT nextval('%s')", sequence))
 
 		qry := fmt.Sprintf("SELECT setval('%s', %d, false);", sequence, curVal)
 		QExec(db, qry, nil)
