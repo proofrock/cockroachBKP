@@ -8,6 +8,8 @@ import (
 	"strings"
 
 	_ "github.com/lib/pq"
+	"github.com/proofrock/cockroach_bkp/util"
+	"github.com/proofrock/cockroach_bkp/util/sqlxx"
 )
 
 const Version = "v0.1.0"
@@ -34,13 +36,14 @@ func main() {
 	var inserts []string
 
 	db, err := sql.Open("postgres", os.Args[1])
-	ckErr(err)
-	defer Close(db)
+	util.CkErr(err)
+	dbxx := sqlxx.Wrap(db)
+	defer util.Close(db)
 
-	curDB, _ := QRowString(db, "SELECT current_database()")
-	curUser, _ := QRowString(db, "SELECT current_user")
+	curDB, _ := dbxx.QRowString("SELECT current_database()")
+	curUser, _ := dbxx.QRowString("SELECT current_user")
 
-	QRows(db, "SHOW SCHEMAS", func(row Scannable) (stop bool, err error) {
+	dbxx.QRows("SHOW SCHEMAS", func(row sqlxx.Scannable) (stop bool, err error) {
 		var schema string
 		var owner sql.NullString
 		if err = row.Scan(&schema, &owner); err != nil {
@@ -55,7 +58,7 @@ func main() {
 	var tables []string
 	var sequences []string
 
-	QRows(db, "SHOW CREATE ALL TABLES", func(row Scannable) (stop bool, err error) {
+	dbxx.QRows("SHOW CREATE ALL TABLES", func(row sqlxx.Scannable) (stop bool, err error) {
 		var create string
 		if err = row.Scan(&create); err != nil {
 			return true, err
@@ -79,7 +82,7 @@ func main() {
 
 	for _, table := range tables {
 		var columns []string
-		QRows(db, fmt.Sprintf("SHOW COLUMNS FROM %s", table), func(row Scannable) (stop bool, err error) {
+		dbxx.QRows(fmt.Sprintf("SHOW COLUMNS FROM %s", table), func(row sqlxx.Scannable) (stop bool, err error) {
 			var noop interface{}
 			var colName, gen string
 			var hidden bool
@@ -93,7 +96,7 @@ func main() {
 		})
 
 		sel := fmt.Sprintf("SELECT \"%s\" FROM %s", strings.Join(columns, "\", \""), table)
-		QRows(db, sel, func(row Scannable) (stop bool, err error) {
+		dbxx.QRows(sel, func(row sqlxx.Scannable) (stop bool, err error) {
 			values := make([]sql.NullString, len(columns))
 			valuePtrs := make([]interface{}, len(values))
 			valStr := make([]string, len(values))
@@ -120,10 +123,10 @@ func main() {
 	}
 
 	for _, sequence := range sequences {
-		curVal, _ := QRowInt64(db, fmt.Sprintf("SELECT nextval('%s')", sequence))
+		curVal, _ := dbxx.QRowInt64(fmt.Sprintf("SELECT nextval('%s')", sequence))
 
 		qry := fmt.Sprintf("SELECT setval('%s', %d, false);", sequence, curVal)
-		QExec(db, qry)
+		dbxx.QExec(qry)
 		inserts = append(inserts, qry)
 	}
 
